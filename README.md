@@ -18,7 +18,7 @@ This repository implements the PromptXplorer framework, which constructs ordered
 - `CompositePrompt` class:
   - Attributes: `primary` (PrimaryPrompt), `secondaries` (ordered list of SecondaryPrompt objects)
   - Method: `get_composite_class()` → returns ordered list [primary.class, secondary1.class, secondary2.class, ...]
-- `Database` class:
+- `PromptManager` class:
   - Attributes: 
     - `composite_prompts` (list of CompositePrompt objects)
     - `composite_classes` (2D matrix, initially None) - same dimensions as loaded data, each cell contains class instead of text
@@ -27,12 +27,17 @@ This repository implements the PromptXplorer framework, which constructs ordered
     - `get_all_primary_prompts()` → returns list of all PrimaryPrompt objects
     - `get_all_composite_prompts()` → returns list of all CompositePrompt objects
     - `get_composite_classes()` → computes and sets `composite_classes` matrix by calling `get_composite_class()` on each CompositePrompt, returns the matrix
+    - `save(filename_prefix: str)` → saves PromptManager to `prompt_manager_objects/{filename_prefix}/` subfolder:
+      - CSV file 1: `prompts.csv` - each row = one prompt, columns: primary, secondary1, secondary2, ..., primary_class, secondary1_class, secondary2_class, ...
+      - CSV file 2: `classes.csv` - each row = class index and description
+      - CSV file 3: `support_matrix.csv` - first two columns = combination of possible pairs of class indices (directed way), third column = support value
+    - `load(filename_prefix: str) → PromptManager` → loads PromptManager from `prompt_manager_objects/{filename_prefix}/` subfolder using the three CSV files
 
 **1.2. Data Loader (`data_model/load_data.py`)**
 - `DataLoader` class with parameters:
   - `separated` (bool): whether data is already separated
   - `n` (int): number of rows to consider from CSV
-  - Method: `load_data(csv_path: str, batch_size: int = None) → Database`
+  - Method: `load_data(csv_path: str, batch_size: int = None) → PromptManager`
     - **If `separated=True`**:
       - Reads CSV file (first `n` rows) where each row is one prompt
       - First column is primary prompt, remaining columns (comma-separated) are satellite/secondary prompts
@@ -43,16 +48,20 @@ This repository implements the PromptXplorer framework, which constructs ordered
       - Uses LLM decomposition to split each prompt into primary + satellite prompts
       - Processes data in batches (max possible length) to LLM
       - Returns decomposed data in same format as separated=True
-    - Returns Database object containing all composite prompts
+    - Returns PromptManager object containing all composite prompts
 
-**1.3. LLM Interface (`llm/llm_client.py`)**
-- `LLMClient` class (will be extended with more functions later)
+**1.3. LLM Interface (`llm/llm_interface.py`)**
+- `LLMInterface` class (will be extended with more functions later)
 - Method: `decompose_prompts(prompts: List[str], batch_size: int) → List[Dict]`
   - Takes list of full prompts
   - Processes in batches (respecting max token length)
   - Calls LLM to decompose each prompt into primary + satellite prompts
   - Returns list of dictionaries with 'primary' and 'secondaries' keys
   - Handles batching logic and LLM API calls
+- Method: `generate_class_description(prompts: List[str], max_tokens: int = None) → str`
+  - Takes list of prompts belonging to a class (below threshold to avoid max length)
+  - Calls LLM to generate a short description (few words) for the class
+  - Returns description string
 
 ---
 
@@ -60,32 +69,33 @@ This repository implements the PromptXplorer framework, which constructs ordered
 
 **2.1. Clustering Class (`clustering/clusterer.py`)**
 - `Clustering` class with parameters:
-  - `database` (Database object): the database to cluster
+  - `prompt_manager` (PromptManager object): the prompt manager to cluster
   - `algorithm` (str): clustering algorithm to use (e.g., 'kmeans', 'dbscan', etc.)
 - Clustering algorithm methods (each as a separate method):
-  - `kmeans_clustering(texts, n_clusters)` → returns cluster labels and descriptions
-  - `dbscan_clustering(texts, eps, min_samples)` → returns cluster labels and descriptions
-  - `hdbscan_clustering(texts, min_cluster_size, min_samples)` → returns cluster labels and descriptions
+  - `kmeans_clustering(texts, n_clusters)` → returns cluster labels (descriptions generated via LLM)
+  - `dbscan_clustering(texts, eps, min_samples)` → returns cluster labels (descriptions generated via LLM)
+  - `hdbscan_clustering(texts, min_cluster_size, min_samples)` → returns cluster labels (descriptions generated via LLM)
   - Additional algorithms can be added as methods
-- Main workflow method: `cluster(algorithm_params: dict) → Database`
+- Main workflow method: `cluster(algorithm_params: dict) → PromptManager`
   - Vectorize prompts (TF-IDF or embeddings)
   - Cluster primary prompts separately using selected algorithm
   - Cluster secondary prompts separately using selected algorithm
-  - Call `store_cluster_results()` to assign classes to prompts
+  - For each cluster, generate class description using LLM (given prompts below threshold to avoid max length)
+  - Assigns cluster labels and descriptions to prompts:
+    - Creates `PromptClass` objects with index and description (description from LLM)
+    - Sets `class` attribute for all PrimaryPrompt and SecondaryPrompt objects
   - Call `compute_support()` and `build_support_matrix()` to populate support matrix
-  - Returns updated Database object
-- `store_cluster_results(primary_labels, primary_descriptions, secondary_labels, secondary_descriptions)`
-  - Assigns cluster labels and descriptions to prompts
-  - Creates `PromptClass` objects with index and description
-  - Sets `class` attribute for all PrimaryPrompt and SecondaryPrompt objects
-  - Saves cluster results to `cluster_results/` folder with meaningful unique filenames (e.g., timestamp + algorithm name)
-  - Files can be used directly for algorithms/analysis
+  - Returns updated PromptManager object (ready to be saved)
 - `compute_support() → dict`
   - Computes support for each composite class
-  - Returns dictionary mapping composite class sequences to support counts
+  - Returns dictionary where:
+    - Key: ordered tuple of classes (e.g., (primary_class, secondary1_class, secondary2_class, ...))
+    - Value: support count for that composite class sequence
 - `build_support_matrix()`
-  - Builds support matrix from computed support values
-  - Sets `support_matrix` attribute of Database object
+  - Takes the output dictionary from `compute_support()`
+  - Builds support matrix from the computed support values
+  - Sets `support_matrix` attribute of PromptManager object
+- **Note**: Clustering is a preprocessing step that can be done without knowing the user query. After clustering, call `PromptManager.save()` to persist everything (prompts, classes, support matrix) in a subfolder within `prompt_manager_objects/`.
 
 ---
 
@@ -136,7 +146,7 @@ This repository implements the PromptXplorer framework, which constructs ordered
 **4.1. PromptXplorer Class**
 - Main end-to-end framework class
 - Input parameters:
-  - `database` (Database object): the prompt repository
+  - `prompt_manager` (PromptManager object): the prompt repository (preprocessed with clustering)
   - `primary_prompt` (str): user's new input primary prompt
   - `length` (int): desired composite prompt length
   - `k` (int): number of composite prompts to return
@@ -159,21 +169,20 @@ PromptXplorer-/
 ├── requirements.txt
 ├── config.py                    # Configuration parameters
 ├── data_model/
-│   ├── data_models.py          # Phase 1.1: Data structures (PrimaryPrompt, SecondaryPrompt, CompositePrompt, Database)
-│   └── load_data.py            # Phase 1.2-1.4: Data loading (DataLoader class + load_data function)
+│   ├── data_models.py          # Phase 1.1: Data structures (PrimaryPrompt, SecondaryPrompt, CompositePrompt, PromptManager)
+│   └── load_data.py            # Phase 1.2: Data loading (DataLoader class + load_data function)
 ├── clustering/
 │   └── clusterer.py            # Phase 2: Clustering (Clustering class with multiple algorithms, support computation)
-├── cluster_results/            # Saved cluster results (created by store_cluster_results)
+├── prompt_manager_objects/     # Saved/loaded PromptManager objects (subfolders with CSV files)
 ├── algorithms/
 │   ├── sequence_construction.py  # Phase 3.1: Interface + IPF and RandomWalk classes
 │   ├── prompt_selector.py        # Phase 3.2: IndividualPromptSelector class (RAG + LLM)
 │   ├── representative_selection.py # Phase 3.3: KSetCoverage class
 │   └── sequence_ordering.py      # Phase 3.4: OrderSequence class
 ├── llm/
-│   ├── llm_client.py           # LLM integration (OpenAI/other) - Phase 1.3: decompose_prompts() + future functions
+│   ├── llm_interface.py        # LLM integration (OpenAI/other) - Phase 1.3: decompose_prompts() + future functions
 │   └── prompts.py              # LLM prompt templates
 ├── promptxplorer.py            # Phase 4: PromptXplorer main class (end-to-end framework)
-├── config.py                   # Configuration parameters
 └── utils/
     ├── logger.py
     └── metrics.py
