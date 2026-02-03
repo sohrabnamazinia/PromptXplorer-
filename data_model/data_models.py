@@ -61,6 +61,8 @@ class PromptManager:
         self.composite_classes = None  # 2D matrix
         self.primary_to_secondary_support = None  # dict: (primary_class, secondary_class) -> support
         self.secondary_to_secondary_support = None  # dict: (secondary_class1, secondary_class2) -> support
+        self.k_class_sequences = None  # list of k selected composite class sequences
+        self.final_composite_prompts = None  # list of k final composite prompt strings
     
     def get_all_primary_prompts(self):
         """Returns list of all PrimaryPrompt objects."""

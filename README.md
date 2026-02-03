@@ -67,7 +67,7 @@ This repository implements the PromptXplorer framework, which constructs ordered
 
 ### Phase 2: Clustering Module
 
-**2.1. Clustering Class (`clustering/clusterer.py`)**
+**2.1. Clustering Class (`preprocessing/clusterer.py`)**
 - `Clustering` class with parameters:
   - `prompt_manager` (PromptManager object): the prompt manager to cluster
   - `algorithm` (str): clustering algorithm to use (e.g., 'kmeans', 'dbscan', etc.)
@@ -114,22 +114,29 @@ This repository implements the PromptXplorer framework, which constructs ordered
   - Gelman-Rubin convergence checking
   - **First LLM Integration**: Check confidence threshold, use LLM if below threshold
 
-**3.2. Prompt Selector (`algorithms/prompt_selector.py`)**
-- `IndividualPromptSelector` class:
-  - Embedding function (OpenAI embeddings or configurable)
-  - Relevance scoring function (Euclidean distance or configurable)
-  - Compute prefix embeddings for sequences
-  - For each composite class sequence, select actual prompt instances
-  - Use RAG to retrieve relevant complementary prompts from repository
-  - **Second LLM Integration**: Select best instances based on relevance scores
-  - Generate final composite prompt sequences (primary + ordered complementary instances)
-
-**3.3. Representative Selection (`algorithms/representative_selection.py`)**
+**3.2. Representative Selection (`algorithms/representative_selection.py`)**
 - `KSetCoverage` class:
   - Compute coverage (distinct complementary classes) for a set of sequences
   - Track which classes are covered by which sequences
   - Greedy algorithm to select k sequences maximizing coverage
   - Sampling-based variant: at each iteration, sample k candidate sequences and select best
+  - **Note**: Applied to composite class sequences (not prompt instances) to reduce from many sequences to k before instance selection
+
+**3.3. Prompt Selector (`algorithms/prompt_selector.py`)**
+- `IndividualPromptSelector` class:
+  - Takes PromptManager with k selected composite class sequences
+  - Uses RAG to select actual prompt instances for each sequence
+  - For each composite class sequence, incrementally builds the prompt:
+    - Starts with user input (primary prompt)
+    - For each secondary class in sequence, uses RAG to select best secondary prompt instance
+    - RAG retrieves top-L similar prompts and uses LLM to select one
+  - **Second LLM Integration**: LLM selects best instances based on current prompt context
+  - Generate final composite prompt sequences (primary + ordered complementary instances)
+  - **Note**: Applied after k-set coverage to reduce LLM costs by only selecting instances for k sequences
+
+**Preprocessing Components:**
+- `preprocessing/embedding.py`: `Embedding` class that computes and stores embeddings for all secondary prompts in `embeddings_db/secondary_embeddings.csv`
+- `llm/rag.py`: `RAG` class that uses embeddings and LLM to select next prompt to add
 
 **3.4. Sequence Ordering (`algorithms/sequence_ordering.py`)**
 - `OrderSequence` class:
@@ -171,8 +178,10 @@ PromptXplorer-/
 ├── data_model/
 │   ├── data_models.py          # Phase 1.1: Data structures (PrimaryPrompt, SecondaryPrompt, CompositePrompt, PromptManager)
 │   └── load_data.py            # Phase 1.2: Data loading (DataLoader class + load_data function)
-├── clustering/
-│   └── clusterer.py            # Phase 2: Clustering (Clustering class with multiple algorithms, support computation)
+├── preprocessing/
+│   ├── clusterer.py            # Phase 2: Clustering (Clustering class with multiple algorithms, support computation)
+│   └── embedding.py            # Embedding computation for secondary prompts
+├── embeddings_db/             # Stored embeddings (CSV file)
 ├── prompt_manager_objects/     # Saved/loaded PromptManager objects (subfolders with CSV files)
 ├── algorithms/
 │   ├── sequence_construction.py  # Phase 3.1: Interface + IPF and RandomWalk classes
@@ -181,6 +190,7 @@ PromptXplorer-/
 │   └── sequence_ordering.py      # Phase 3.4: OrderSequence class
 ├── llm/
 │   ├── llm_interface.py        # LLM integration (OpenAI/other) - Phase 1.3: decompose_prompts() + future functions
+│   ├── rag.py                  # RAG class for prompt selection
 │   └── prompts.py              # LLM prompt templates
 ├── promptxplorer.py            # Phase 4: PromptXplorer main class (end-to-end framework)
 └── utils/
@@ -213,3 +223,12 @@ PromptXplorer-/
 5. **Order sequences**:
    - Weighted Hamming distance between prompts
    - Greedy: most diverse from all → most diverse from first → most diverse from previous → ...
+
+---
+
+## Remaining Tasks
+
+1. **Fix DBSCAN and HDBSCAN clustering algorithms**: Currently implemented but may need debugging/refinement
+2. **Implement IPF (Iterative Proportional Filtering) algorithm**: For sequence construction as an alternative to Random Walk
+3. **Implement confidence-based LLM helper in Random Walk**: Track confidence values for transitions (primary→secondary and secondary→secondary). When confidence is below a threshold, use LLM to help decide which node to go to next, rather than relying solely on support values
+4. **Implement stochastic coverage in k-set coverage**: In each iteration of the greedy algorithm, instead of considering all possible sequences, sample p of them and select the best from the sampled set. This improves efficiency for large sets of sequences

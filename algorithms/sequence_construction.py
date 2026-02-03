@@ -54,6 +54,24 @@ class RandomWalk:
         
         return [primary_class] + secondary_classes
     
+    def random_walk_iter(self, user_input: str, phi: int, large_k: int):
+        """
+        Runs random walk multiple times to generate multiple composite class sequences.
+        
+        Args:
+            user_input: User's input primary prompt
+            phi: Number of secondary classes to generate per sequence
+            large_k: Number of times to run random walk
+        
+        Returns:
+            List of composite class sequences, each is [primary_class, secondary1_class, ..., secondary_phi_class]
+        """
+        sequences = []
+        for _ in range(large_k):
+            sequence = self.walk(user_input, phi)
+            sequences.append(sequence)
+        return sequences
+    
     def walk_init_primary(self, user_input: str):
         """
         Uses LLM to choose primary class from user input.

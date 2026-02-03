@@ -184,3 +184,73 @@ Return only the class index (just the number) that best matches the user input:"
             pass
         
         return None
+    
+    def select_next_prompt_rag(self, current_prompt: str, candidate_prompts: list, completed_prompts: list = None):
+        """
+        Selects the next prompt to add to current prompt using RAG.
+        
+        Args:
+            current_prompt: Current prompt (user input + any already added prompts)
+            candidate_prompts: List of candidate prompt strings to choose from
+            completed_prompts: Optional list of previously completed prompts to avoid repetition
+        
+        Returns:
+            Dictionary with 'selected_prompt' and 'updated_prompt' keys, or None if parsing fails
+        """
+        import json
+        
+        # Format candidate prompts
+        candidates_text = "\n".join([f"- {p}" for p in candidate_prompts])
+        
+        # Format completed prompts context
+        completed_context = ""
+        if completed_prompts:
+            completed_text = "\n".join([f"- {p}" for p in completed_prompts])
+            completed_context = f"\n\nPreviously completed prompts (avoid exact repetition with these):\n{completed_text}"
+        
+        template = ChatPromptTemplate.from_messages([
+            ("system", "You are a helpful assistant that selects the best prompt to add to an existing prompt. Your selection should make the most sense and should not be repetitive within the current prompt."),
+            ("user", """Given the current prompt and a list of candidate prompts, select the best one to add to it.
+
+Current prompt: {current_prompt}
+
+Candidate prompts to choose from:
+{candidates}{completed_context}
+
+Return a JSON object with two keys:
+- "selected_prompt": the prompt you selected from the candidates
+- "updated_prompt": the current prompt with the selected prompt added (comma-separated)
+
+Make sure your selection:
+1. Makes the most sense with the current prompt
+2. Is not repetitive within the current prompt
+3. Avoids exact repetition with previously completed prompts if any
+
+Return only the JSON object:""")
+        ])
+        
+        chain = template | self.llm
+        response = chain.invoke({
+            "current_prompt": current_prompt,
+            "candidates": candidates_text,
+            "completed_context": completed_context
+        })
+        
+        response_text = response.content.strip()
+        
+        # Parse JSON response
+        try:
+            # Remove markdown code blocks if present
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json"):
+                    response_text = response_text[4:]
+            response_text = response_text.strip()
+            
+            result = json.loads(response_text)
+            return {
+                'selected_prompt': result['selected_prompt'],
+                'updated_prompt': result['updated_prompt']
+            }
+        except (json.JSONDecodeError, KeyError):
+            return None

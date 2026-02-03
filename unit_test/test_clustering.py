@@ -8,7 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data_model.load_data import DataLoader
 from data_model.data_models import PromptManager
-from clustering.clusterer import Clustering
+from preprocessing.clusterer import Clustering
 
 
 def test_clustering():
