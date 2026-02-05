@@ -254,3 +254,85 @@ Return only the JSON object:""")
             }
         except (json.JSONDecodeError, KeyError):
             return None
+    
+    def decompose_prompts_batch(self, prompts: list):
+        """
+        Decomposes a batch of prompts into primary and secondary prompts.
+        
+        Args:
+            prompts: List of prompt strings to decompose
+        
+        Returns:
+            Dictionary mapping each prompt to {"primary": str, "secondaries": list}
+            If a prompt has no secondaries, it will be marked with "ignore": True
+        """
+        import json
+        
+        # Format prompts for the template
+        prompts_text = "\n".join([f"{i+1}. {p}" for i, p in enumerate(prompts)])
+        
+        template = ChatPromptTemplate.from_messages([
+            ("system", "You are a helpful assistant that decomposes prompts into a primary objective and secondary details. The primary is the core subject or style, and secondaries are additional modifiers, details, or context."),
+            ("user", """Given the following prompts, decompose each into a primary prompt (the core objective) and secondary prompts (auxiliary details that enrich it).
+
+Examples:
+
+1. "a painting by edward hopper of scenes from the mad max movie universe."
+Primary: "a painting by edward hopper"
+Secondaries: ["of scenes from the mad max movie universe"]
+
+2. "a painting by edward hopper of a bird with a staff:"
+Primary: "a painting by edward hopper"
+Secondaries: ["of a bird with a staff"]
+
+3. "a painting by edward hopper of an eerie scene on a rainy day, illuminated by the cityscape."
+Primary: "a painting by edward hopper"
+Secondaries: ["of an eerie scene on a rainy day", "illuminated by the cityscape"]
+
+4. "a painting by edward hopper of a woman in the streets of an apocalyptic city, surrounded by the darkness."
+Primary: "a painting by edward hopper"
+Secondaries: ["of a woman in the streets of an apocalyptic city", "surrounded by the darkness"]
+
+5. "a painting by edward hopper of a group of four friends laughing hysterically in front of a castle."
+Primary: "a painting by edward hopper"
+Secondaries: ["of a group of four friends", "friends laughing hysterically in front of a castle"]
+
+6. "geodesic landscape, john chamberlain, christopher balaskas, tadao ando, 4 k"
+Primary: "geodesic landscape"
+Secondaries: ["john chamberlain", "christopher balaskas", "tadao ando", "4 k"]
+
+7. "a painting by edward hopper"
+This prompt has no secondaries, so it should be ignored.
+
+Prompts to decompose:
+{prompts}
+
+Return a JSON object where each key is the original prompt (exactly as given) and the value is an object with:
+- "primary": the primary prompt string
+- "secondaries": a list of secondary prompt strings (can be empty)
+- "ignore": true if the prompt has no secondaries or cannot be decomposed, false otherwise
+
+Return only the JSON object:""")
+        ])
+        
+        chain = template | self.llm
+        response = chain.invoke({
+            "prompts": prompts_text
+        })
+        
+        response_text = response.content.strip()
+        
+        # Parse JSON response
+        try:
+            # Remove markdown code blocks if present
+            if response_text.startswith("```"):
+                response_text = response_text.split("```")[1]
+                if response_text.startswith("json"):
+                    response_text = response_text[4:]
+            response_text = response_text.strip()
+            
+            result = json.loads(response_text)
+            return result
+        except (json.JSONDecodeError, KeyError) as e:
+            print(f"Error parsing LLM response: {e}")
+            return {}
